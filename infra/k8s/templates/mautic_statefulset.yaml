@@ -1,0 +1,148 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-mautic 
+  annotations:
+    rollme: {{ randAlphaNum 5 | quote }}
+  labels:
+{{- toYaml .Values.project.labels | nindent 4 }}
+  annotations:
+    rollme: {{ randAlphaNum 5 | quote }}
+spec:
+  serviceName: {{ .Release.Name }}-{{ .Values.project.name }}
+  replicas: {{ .Values.project.replicaCount }}
+  selector:
+    matchLabels:
+{{- toYaml .Values.project.labels | nindent 6 }}
+  template:
+    metadata:
+      name: {{ .Values.project.name }}
+      annotations:
+        rollme: {{ randAlphaNum 5 | quote }}
+      labels:
+{{- toYaml .Values.project.labels | nindent 8 }}
+    spec:
+      securityContext:
+{{- toYaml .Values.project.securityContext | nindent 8 }} 
+      containers:
+        - image: "{{ .Values.project.nginxImage.repository }}:{{ .Values.project.nginxImage.tag }}"
+          name: nginx
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.project.service.targetPort }}
+              name: web
+          env:
+          - name: SERVER_NAME  
+            {{- if eq  .Values.project.branch "master" }}
+            value: {{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else if .Values.project.branch }}
+            value: {{ .Values.project.branch }}-{{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else }}
+            value: {{ .Values.ingress.domain }}
+            {{- end }}
+          - name: TRUSTED_PROXIES
+            value: {{ .Values.project.trustedIPs | quote }}
+        - image: "{{ .Values.project.mauticImage.repository }}:{{ .Values.project.mauticImage.tag }}"
+          name: mautic
+          imagePullPolicy: Always
+          env:
+          - name: CORS_DOMAINS
+            value: {{ .Values.project.corsDomains | quote }}
+          - name: GA_TRACKING_ID
+            value: {{ .Values.project.gaTrackingId | quote }}
+          - name: MYSQL_DB_HOST
+            {{- if .Values.ExternalDb.host }}
+            value: {{ .Values.ExternalDb.host }}
+            {{- else }}
+            value: {{ .Release.Name }}-{{ $.Values.db.name }}
+            {{- end }}
+          - name: MYSQL_DATABASE
+            value: {{ .Values.db.database }}
+          - name: MYSQL_USER
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-db-secret
+                key: database-user
+          - name: MYSQL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-db-secret
+                key: database-password
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-app-secret
+                key: secret-key
+          {{- if .Values.project.s3Bucket }}
+          - name: S3_BUCKET
+            value: {{ .Values.project.s3Bucket }}
+          {{- end  }}
+          - name: SITE_URL
+            {{- if eq  .Values.project.branch "master" }}
+            value: https://{{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else if .Values.project.branch }}
+            value: https://{{ .Values.project.branch }}-{{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else }}
+            value:  https://{{ .Values.ingress.domain }}
+            {{- end }}            
+          - name: SERVER_NAME  
+            {{- if eq  .Values.project.branch "master" }}
+            value: {{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else if .Values.project.branch }}
+            value: {{ .Values.project.branch }}-{{ .Values.project.name }}.{{ .Values.ingress.domain }}
+            {{- else }}
+            value: {{ .Values.ingress.domain }}
+            {{- end }}              
+          - name: MAILER_HOST
+            value: {{ .Values.project.mailerHost | quote }}
+          - name: MAILER_USER
+            value: {{ .Values.project.mailerUser }}
+          - name: MAILER_PASSWORD            
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-app-secret
+                key: mailer-password
+          - name: MAILER_AMAZON_REGION
+            value: {{ .Values.project.mailerAmazonRegion | quote }}
+          - name: RABBITMQ_HOST
+            value: {{ .Release.Name }}-rabbitmq-headless
+          - name: REDIS_HOST
+            value: {{ .Release.Name }}-redis-master-svc
+          - name: REDIS_PORT
+            value: {{ .Values.project.redisPort | quote }}             
+          - name: RABBITMQ_USER
+            value: user
+          - name: RABBITMQ_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-rabbitmq-password
+                key: rabbitmq-password
+          - name: SAML_IDP_IDENTITY_ID
+            value: {{ .Values.project.samlIdpIdentityId | quote }}
+          - name: TRUSTED_PROXIES
+            value: {{ .Values.project.trustedIPs | quote }}      
+          volumeMounts:
+            - name: cache  
+              mountPath: /cache
+            - name: logs
+              mountPath: /logs
+            - name: media
+              mountPath: /var/www/symfony/mautic/media
+            - name: spool
+              mountPath: /mnt/spool
+      volumes:
+      - name: cache
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-cache
+      - name: logs
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-logs
+      - name: media
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-media
+      - name: spool
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-spool
+      imagePullSecrets:
+      {{- toYaml .Values.project.imagePullSecrets | nindent 6 }}
